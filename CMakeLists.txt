@@ -5,12 +5,12 @@ project(AliasManager VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core)
 
-qt_standard_project_setup()
-
-qt_add_executable(alias-manager
+add_executable(alias-manager
     main.cpp
+    cli.cpp
+    cli.h
 )
 
-target_link_libraries(alias-manager PRIVATE Qt6::Widgets)
+target_link_libraries(alias-manager PRIVATE Qt6::Core)
