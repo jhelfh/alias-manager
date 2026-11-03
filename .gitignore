@@ -1,0 +1,10 @@
+#build files
+/build/
+/build-*/
+
+#local server settings
+/.vscode/
+
+#dumps
+/core
+/core*
