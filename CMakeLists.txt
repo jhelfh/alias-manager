@@ -1,16 +1,40 @@
 cmake_minimum_required(VERSION 3.22)
-
-project(AliasManager VERSION 0.1.0 LANGUAGES CXX)
-
+project(AliasManager VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 find_package(Qt6 REQUIRED COMPONENTS Core)
-
-add_executable(alias-manager
-    main.cpp
-    cli.cpp
-    cli.h
-)
-
-target_link_libraries(alias-manager PRIVATE Qt6::Core)
+add_executable(alias-manager-core main.cpp cli.cpp cli.h storage.cpp storage.h terminal.cpp terminal.h)
+target_link_libraries(alias-manager-core PRIVATE Qt6::Core)
+target_compile_options(alias-manager-core PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS alias-manager-core RUNTIME DESTINATION lib/alias-manager)
+install(PROGRAMS packaging/alias-manager DESTINATION bin)
+install(PROGRAMS packaging/session DESTINATION lib/alias-manager)
+install(FILES bash-integration.sh DESTINATION share/alias-manager)
+install(FILES README.md LICENSE CHANGELOG.md DESTINATION share/doc/alias-manager)
+set(CPACK_GENERATOR "DEB")
+set(CPACK_PACKAGE_NAME "alias-manager")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_VENDOR "reiethereal")
+set(CPACK_PACKAGE_CONTACT "reiethereal")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Terminal interface for managing Bash aliases")
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "reiethereal")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "bash (>= 4.4), coreutils, mawk, grep")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(storage-test tests/storage-test.cpp storage.cpp)
+    target_include_directories(storage-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(storage-test PRIVATE Qt6::Core)
+    add_test(NAME storage COMMAND storage-test)
+    add_executable(terminal-probe tests/terminal-probe.cpp terminal.cpp)
+    target_include_directories(terminal-probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME shell-integration COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check-shell.py")
+        add_test(NAME terminal-input COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/check-terminal.py" "$<TARGET_FILE:terminal-probe>")
+    endif()
+endif()
+include(CPack)

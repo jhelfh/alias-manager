@@ -1,0 +1,80 @@
+#!/bin/bash
+set -euo pipefail
+backend=/usr/lib/alias-manager/alias-manager-core
+session=/usr/lib/alias-manager/session
+if (( $# > 0 )); then
+    if [[ $1 == --here && $# == 1 ]]; then
+        exec "$session"
+    fi
+    exec "$backend" "$@"
+fi
+if [[ -z ${DISPLAY:-} && -z ${WAYLAND_DISPLAY:-} ]]; then
+    printf '%s\n' 'alias-manager: a graphical desktop is required for a separate window.' \
+      'Use alias-manager --here to run in the current terminal.' >&2
+    exit 1
+fi
+if [[ ${GTK_PATH:-} == *'/snap/'* || ${GTK_EXE_PREFIX:-} == *'/snap/'* ||
+      ${GSETTINGS_SCHEMA_DIR:-} == *'/snap/'* || ${SNAP_NAME:-} == code ||
+      ${GIO_MODULE_DIR:-} == *'/snap/'* ]]; then
+    unset GTK_PATH GTK_EXE_PREFIX GTK_DATA_PREFIX GTK_IM_MODULE_FILE GTK_MODULES
+    unset GIO_MODULE_DIR GSETTINGS_SCHEMA_DIR GDK_PIXBUF_MODULE_FILE GDK_PIXBUF_MODULEDIR
+    unset GDK_BACKEND LD_LIBRARY_PATH LD_PRELOAD
+    export XDG_DATA_DIRS=/usr/local/share:/usr/share:/var/lib/snapd/desktop:/var/lib/flatpak/exports/share
+    if [[ -n ${HOME:-} ]]; then
+        XDG_DATA_DIRS="$HOME/.local/share/flatpak/exports/share:$XDG_DATA_DIRS"
+    fi
+    export XDG_CONFIG_DIRS=/etc/xdg
+fi
+launch() {
+    local terminal=$1 resolved name
+    resolved=$(command -v -- "$terminal") || return 127
+    name=$(basename -- "$(readlink -f -- "$resolved")")
+    case "$name" in
+        ptyxis) exec "$resolved" --standalone --new-window --title='Alias Manager' -- "$session" ;;
+        gnome-terminal|gnome-terminal.wrapper) exec "$resolved" --wait --window --title='Alias Manager' -- "$session" ;;
+        alacritty) exec "$resolved" --title 'Alias Manager' -e "$session" ;;
+        kitty) exec "$resolved" --title 'Alias Manager' "$session" ;;
+        konsole) exec "$resolved" --separate -e "$session" ;;
+        xfce4-terminal) exec "$resolved" --disable-server --window --title='Alias Manager' -x "$session" ;;
+        tilix) exec "$resolved" --new-process -a app-new-window -e "$session" ;;
+        foot) exec "$resolved" --title='Alias Manager' "$session" ;;
+        wezterm) exec "$resolved" start --always-new-process -- "$session" ;;
+        xterm|uxterm) exec "$resolved" -T 'Alias Manager' -e "$session" ;;
+        *) return 2 ;;
+    esac
+}
+if [[ -n ${ALIAS_MANAGER_TERMINAL:-} ]]; then
+    if launch "$ALIAS_MANAGER_TERMINAL"; then exit 0; fi
+    printf 'alias-manager: unsupported or missing terminal: %s\n' "$ALIAS_MANAGER_TERMINAL" >&2
+    exit 1
+fi
+if command -v xdg-terminal-exec >/dev/null 2>&1; then
+    selected=$(xdg-terminal-exec --print-id 2>/dev/null) || selected=""
+    case "${selected,,}" in
+        *ptyxis*) preferred=ptyxis ;;
+        *alacritty*) preferred=alacritty ;;
+        *kitty*) preferred=kitty ;;
+        *konsole*) preferred=konsole ;;
+        *xfce4-terminal*) preferred=xfce4-terminal ;;
+        *tilix*) preferred=tilix ;;
+        *wezterm*) preferred=wezterm ;;
+        *foot*) preferred=foot ;;
+        *gnome.terminal*) preferred=gnome-terminal ;;
+        *) preferred="" ;;
+    esac
+    if [[ -n "$preferred" ]] && command -v "$preferred" >/dev/null 2>&1; then
+        launch "$preferred" || true
+    fi
+    exec xdg-terminal-exec -- "$session"
+fi
+if command -v x-terminal-emulator >/dev/null 2>&1; then
+    launch x-terminal-emulator || true
+fi
+for terminal in ptyxis gnome-terminal alacritty kitty konsole xfce4-terminal tilix foot wezterm xterm uxterm; do
+    if command -v "$terminal" >/dev/null 2>&1; then
+        launch "$terminal" || true
+    fi
+done
+printf '%s\n' 'alias-manager: no supported terminal was found.' \
+  'Nothing was installed. Use alias-manager --here in an existing terminal.' >&2
+exit 1

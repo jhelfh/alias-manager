@@ -1,14 +1,10 @@
 #include "cli.h"
+#include "storage.h"
+#include "terminal.h"
 
 #include <QCoreApplication>
 #include <QDir>
-#include <QFile>
-#include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonParseError>
-#include <QLockFile>
-#include <QRegularExpression>
-#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
@@ -18,27 +14,16 @@
 
 namespace {
 
-constexpr auto RESET = "\033[0m";
-constexpr auto CYAN = "\033[1;36m";
+constexpr auto RESET = "\033[0;32m";
+constexpr auto CYAN = "\033[1;92m";
 constexpr auto GREEN = "\033[1;32m";
-constexpr auto DIM = "\033[2m";
-
-bool validName(const QString &name)
-{
-    static const QRegularExpression pattern(
-        QStringLiteral("^[A-Za-z_][A-Za-z0-9_-]*$")
-    );
-
-    return pattern.match(name).hasMatch();
-}
+constexpr auto DIM = "\033[0;32m";
 
 QString quoteForBash(QString text)
 {
     text.replace("'", "'\\''");
     return QStringLiteral("'") + text + QStringLiteral("'");
 }
-
-// Do not print control characters from stored commands into the terminal.
 QString displayText(const QString &text)
 {
     QString result;
@@ -61,151 +46,16 @@ QString displayText(const QString &text)
     return result;
 }
 
-bool loadAliases(const QString &path, QJsonObject &aliases, QString &error)
+bool ask(QTextStream &in, QTextStream &out,
+         const QString &label, QString &answer)
 {
-    aliases = QJsonObject();
-    QFile file(path);
-
-    if (!file.exists()) {
-        return true;
-    }
-
-    if (!file.open(QIODevice::ReadOnly)) {
-        error = file.errorString();
-        return false;
-    }
-
-    const QByteArray data = file.readAll();
-
-    if (file.error() != QFileDevice::NoError) {
-        error = file.errorString();
-        return false;
-    }
-
-    QJsonParseError parseError;
-    const QJsonDocument document =
-        QJsonDocument::fromJson(data, &parseError);
-
-    if (parseError.error != QJsonParseError::NoError ||
-        !document.isObject()) {
-        error = "Invalid aliases.json. File was not changed.";
-        return false;
-    }
-
-    aliases = document.object();
-
-    for (auto it = aliases.constBegin(); it != aliases.constEnd(); ++it) {
-        if (!validName(it.key()) ||
-            !it.value().isString() ||
-            it.value().toString().trimmed().isEmpty() ||
-            it.value().toString().contains(QChar(0))) {
-            error = "Invalid alias data. File was not changed.";
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool saveAliases(const QString &path,
-                 const QJsonObject &aliases,
-                 QString &error)
-{
-    QSaveFile file(path);
-
-    if (!file.open(QIODevice::WriteOnly)) {
-        error = file.errorString();
-        return false;
-    }
-
-    const QByteArray data =
-        QJsonDocument(aliases).toJson(QJsonDocument::Indented);
-
-    if (file.write(data) != data.size()) {
-        error = file.errorString();
-        return false;
-    }
-
-    if (!file.commit()) {
-        error = file.errorString();
-        return false;
-    }
-
-    return true;
-}
-
-// Lock only while updating storage, not while waiting for user input.
-bool changeAlias(const QString &directory,
-                 const QString &action,
-                 const QString &oldName,
-                 const QString &name,
-                 const QString &command,
-                 QString &error)
-{
-    QLockFile lock(directory + "/aliases.lock");
-
-    if (!lock.tryLock(1000)) {
-        error = "Storage is busy. Try again.";
-        return false;
-    }
-
-    const QString path = directory + "/aliases.json";
-    QJsonObject aliases;
-
-    // Read the latest version after obtaining the lock.
-    if (!loadAliases(path, aliases, error)) {
-        return false;
-    }
-
-    if (action == "delete") {
-        if (!aliases.contains(oldName)) {
-            error = "Alias not found: " + oldName;
-            return false;
-        }
-
-        aliases.remove(oldName);
-    } else {
-        if (!validName(name)) {
-            error = "Use letters, digits, _ and -. "
-                    "Start with a letter or underscore.";
-            return false;
-        }
-
-        if (command.trimmed().isEmpty() || command.contains(QChar(0))) {
-            error = "Command is empty or contains a null character.";
-            return false;
-        }
-
-        if (action == "edit" && !aliases.contains(oldName)) {
-            error = "Alias not found: " + oldName;
-            return false;
-        }
-
-        if (aliases.contains(name) &&
-            (action == "add" || name != oldName)) {
-            error = "Alias already exists: " + name;
-            return false;
-        }
-
-        if (action == "edit") {
-            aliases.remove(oldName);
-        }
-
-        aliases.insert(name, command);
-    }
-
-    return saveAliases(path, aliases, error);
-}
-
-bool ask(QTextStream &in,
-         QTextStream &out,
-         const QString &label,
-         QString &answer)
-{
+    Q_UNUSED(in);
     out << CYAN << "  " << label << RESET;
     out.flush();
-
-    return in.readLineInto(&answer);
+    const auto line = readBlinkingLine();
+    if (!line) return false;
+    answer = QString::fromUtf8(line->data(), static_cast<qsizetype>(line->size()));
+    return true;
 }
 
 void drawScreen(QTextStream &out,
@@ -226,7 +76,7 @@ void drawScreen(QTextStream &out,
 
     out << RESET
         << DIM
-        << "  v0.1.0                          made by reiethereal\n"
+        << "  v0.2.0                          made by reiethereal\n"
         << RESET
         << "\n  YOUR ALIASES\n"
         << DIM
@@ -262,13 +112,14 @@ void drawScreen(QTextStream &out,
         << "  [0] Exit\n";
 
     if (!message.isEmpty()) {
-        out << "\n  " << displayText(message) << '\n';
+        out << (message.startsWith("[!]") ? "\033[1;31m" : "\033[1;92m")
+            << "\n  " << displayText(message) << RESET << '\n';
     }
 
     out << '\n';
 }
 
-} // namespace
+}
 
 int runCli(int argc, char *argv[])
 {
@@ -283,18 +134,19 @@ int runCli(int argc, char *argv[])
 
     if (args.size() == 1 &&
         (args.first() == "--help" || args.first() == "-h")) {
-        out << "Alias Manager 0.1.0\n\n"
+        out << "Alias Manager 0.2.0\n\n"
             << "Usage: alias-manager [OPTION]\n\n"
             << "Run without arguments to open the interactive menu.\n\n"
             << "Options:\n"
             << "  -h, --help   Show help\n"
-            << "  --version    Show version\n\n"
+            << "  --version    Show version\n"
+            << "  --here       Run in the current terminal\n\n"
             << "The 'export' command is reserved for Bash integration.\n";
         return 0;
     }
 
     if (args.size() == 1 && args.first() == "--version") {
-        out << "alias-manager 0.1.0\n";
+        out << "alias-manager 0.2.0\n";
         return 0;
     }
 
@@ -340,6 +192,16 @@ int runCli(int argc, char *argv[])
         return 0;
     }
 
+    struct TerminalState {
+        TerminalState() {
+            std::fputs("\033[?1049h\033[0;32m\033[6 q\033[?25h", stdout);
+            std::fflush(stdout);
+        }
+        ~TerminalState() {
+            std::fputs("\033[?25h\033[0m\033[0 q\033[?1049l", stdout);
+            std::fflush(stdout);
+        }
+    } terminalState;
     QString message;
 
     while (true) {
@@ -431,7 +293,8 @@ int runCli(int argc, char *argv[])
         }
 
         bool validNumber = false;
-        const int index = number.trimmed().toInt(&validNumber) - 1;
+        const qlonglong selected = number.trimmed().toLongLong(&validNumber);
+        const qlonglong index = selected > 0 ? selected - 1 : -1;
         const QStringList names = aliases.keys();
 
         if (!validNumber || index < 0 || index >= names.size()) {
