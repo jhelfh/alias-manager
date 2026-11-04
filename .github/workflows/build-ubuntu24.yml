@@ -1,0 +1,52 @@
+name: Build Ubuntu 24.04 package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/build-ubuntu24.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build \
+            qt6-base-dev dpkg-dev file python3
+
+      - name: Build and test
+        run: bash scripts/build-deb.sh
+
+      - name: Prepare package and checksum
+        run: |
+          mkdir -p release-ubuntu24
+          cp build-release/alias-manager_0.2.0_amd64.deb \
+            release-ubuntu24/alias-manager_0.2.0_ubuntu24.04_amd64.deb
+
+          cd release-ubuntu24
+          sha256sum alias-manager_0.2.0_ubuntu24.04_amd64.deb \
+            > SHA256SUMS-ubuntu24.04
+
+          dpkg-deb --field \
+            alias-manager_0.2.0_ubuntu24.04_amd64.deb \
+            Package Version Architecture Depends
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: alias-manager-0.2.0-ubuntu24.04-amd64
+          path: release-ubuntu24/*
+          if-no-files-found: error
+          retention-days: 30
